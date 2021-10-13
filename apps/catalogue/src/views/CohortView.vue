@@ -21,20 +21,20 @@
           {{ cohort.endYear ? cohort.endYear : "N/A" }}
         </p>
         <h6>Countries</h6>
-        <OntologyTerms :terms="cohort.countries" color="primary"/>
+        <OntologyTerms :terms="cohort.countries" color="primary" />
         <h6>Regions</h6>
         <OntologyTerms :terms="cohort.countries" color="primary" />
-        <h6 v-if="cohort.noParticipants">Number of participants:</h6>
-        <p v-if="cohort.noParticipants">{{ cohort.noParticipants }}</p>
+        <h6 v-if="cohort.numberOfParticipants">Number of participants:</h6>
+        <p v-if="cohort.numberOfParticipants">
+          {{ cohort.numberOfParticipants }}
+        </p>
         <h6>Linkage options</h6>
         <p>{{ cohort.linkageOptions ? cohort.linkageOptions : "N/A" }}</p>
-        <h6>Marker publication</h6>
-        <p>{{ cohort.publication ? cohort.publication : "N/A" }}</p>
+        <h6>Design paper</h6>
+        <p>{{ cohort.designPaper ? cohort.designPaper : "N/A" }}</p>
       </div>
       <div class="col-5 border-left border-primary">
         <h4>Organisation</h4>
-        <h6>Contact</h6>
-        <ContactList :contacts="cohort.contact" />
         <h6>Data access provider(s):</h6>
         <InstitutionList :institutions="cohort.institution" />
         <h6>Contributors:</h6>
@@ -159,12 +159,12 @@ export default {
               design{name}
               collectionType{name}
               keywords
-              acronym
+              pid
               externalIdentifiers
-              contact{name,email}
               contributors {
                 contact {
-                  name
+                  firstName
+                  surname
                 }
                 contributionType {
                   name
@@ -172,21 +172,17 @@ export default {
               }
               partners {
                 institution {
-                  name,acronym
+                  name,pid
                 }
                 role {
                   name
                 }
               }
-              contact {
-                name
-                email
-              }
               countries {
                 name
               }
               linkageOptions
-              noParticipants
+              numberOfParticipants
               dataAccessConditionsDescription
               dataAccessConditions {
                 name
@@ -202,11 +198,11 @@ export default {
                 ontologyTermURI
               }
               institution {
-                acronym
+                pid
                 name
               }
               description
-              homepage
+              website
               documentation {
                 name
                 file {
@@ -215,17 +211,17 @@ export default {
                 url
               }
               networks {
-                acronym
+                pid
                 name
               }
               acknowledgements
               fundingStatement
-              publication
+              designPaper
               collectionEvents {
-                name, startYear, endYear,noParticipants, ageGroups{name}, dataCategories{name},sampleCategories{name},areasOfInformation{name},subcohorts{name}
+                name, description, startYear{name}, endYear{name},numberOfParticipants, ageGroups{name}, dataCategories{name},sampleCategories{name},areasOfInformation{name},subcohorts{name}
               }
               subcohorts {
-                name,noParticipants,ageGroups{name},disease{name},countries{name},regions{name},inclusionCriteria,supplementaryInformation
+                name, description, numberOfParticipants,ageGroups{name},mainMedicalCondition{name},countries{name},regions{name},inclusionCriteria,supplementaryInformation
               }
             }
           }

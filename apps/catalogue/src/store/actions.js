@@ -12,7 +12,7 @@ export default {
     commit("setSchema", resp._schema.name);
     return resp._schema.name;
   },
-  fetchVariables: async ({ state, commit, getters }, offset = 0) => {
+  fetchVariables: async ({ state, commit, getters, dispatch }, offset = 0) => {
     state.isLoading = true;
     const query = gql`
       query Variables($search: String, $filter: VariablesFilter) {
@@ -20,7 +20,7 @@ export default {
           name
           release {
             resource {
-              acronym
+              pid
             }
             version
           }
@@ -40,17 +40,22 @@ export default {
     queryVariables.filter = {
       release: {
         resource: {
-          mg_tableclass: { equals: [`${state.schema}.Networks`] },
+          mg_tableclass: { equals: [`${state.schema}.Models`] },
         },
       },
     };
 
     if (getters.selectedNetworks.length) {
+      const networkModels = await dispatch(
+        "fetchNetworkModels",
+        getters.selectedNetworks
+      );
+
       queryVariables.filter.release = {
-        equals: getters.selectedNetworks.map((selectedNetwork) => {
+        equals: networkModels.map((model) => {
           return {
             version: "1.0.0",
-            resource: selectedNetwork,
+            resource: model,
           };
         }),
       };
@@ -128,7 +133,7 @@ export default {
           equals: [
             {
               resource: {
-                acronym: variable.release.resource.acronym,
+                pid: variable.release.resource.pid,
               },
               version: variable.release.version,
             },
@@ -149,7 +154,7 @@ export default {
           fromTable {
             release {
               resource {
-                acronym
+                pid
               }
               version
             }
@@ -169,7 +174,7 @@ export default {
             {
               release: {
                 resource: {
-                  acronym: variable.release.resource.acronym,
+                  pid: variable.release.resource.pid,
                 },
                 version: variable.release.version,
               },
@@ -186,19 +191,19 @@ export default {
       mappingQueryVariables
     ).catch((e) => console.error(e));
 
-    // Put list in to map, use acronym as key
+    // Put list in to map, use pid as key
     if (
       mappingQueryResp.VariableMappings &&
       mappingQueryResp.VariableMappings.length
     ) {
-      const mappingsByAcronym = mappingQueryResp.VariableMappings.reduce(
+      const mappingsByPid = mappingQueryResp.VariableMappings.reduce(
         (accum, item) => {
-          accum[item.fromTable.release.resource.acronym] = item;
+          accum[item.fromTable.release.resource.pid] = item;
           return accum;
         },
         {}
       );
-      variableDetails.mappings = mappingsByAcronym;
+      variableDetails.mappings = mappingsByPid;
     }
 
     return variableDetails;
@@ -247,7 +252,7 @@ export default {
         release: {
           resource: {
             equals: {
-              acronym: variable.release.resource.acronym,
+              pid: variable.release.resource.pid,
             },
           },
           version: {
@@ -261,5 +266,27 @@ export default {
       console.error(e)
     );
     return resp.VariableMappings;
+  },
+
+  fetchNetworkModels: async (context, selectedNetworks) => {
+    const query = gql`
+      query Networks($filter: NetworksFilter) {
+        Networks(filter: $filter) {
+          pid
+          models {
+            pid
+          }
+        }
+      }
+    `;
+
+    const filter = {
+      pid: { equals: selectedNetworks.map((sn) => sn.pid) },
+    };
+
+    const resp = await request("graphql", query, { filter }).catch((e) =>
+      console.error(e)
+    );
+    return resp.Networks.flatMap((n) => n.models).filter((m) => m != undefined);
   },
 };

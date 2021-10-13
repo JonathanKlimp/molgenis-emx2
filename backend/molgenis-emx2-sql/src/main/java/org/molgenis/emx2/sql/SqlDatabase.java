@@ -8,7 +8,6 @@ import static org.molgenis.emx2.sql.SqlSchemaMetadataExecutor.executeCreateSchem
 
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.*;
-import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -20,7 +19,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class SqlDatabase implements Database {
-  public static final String ADMIN = "admin";
+  static final String ADMIN_USER = "admin";
+  public static final String ADMIN_PW_DEFAULT = "admin";
+
   public static final String ANONYMOUS = "anonymous";
   public static final String USER = "user";
 
@@ -29,13 +30,16 @@ public class SqlDatabase implements Database {
 
   private Integer databaseVersion;
   private DSLContext jooq;
-  private SqlUserAwareConnectionProvider connectionProvider;
-  private Map<String, SqlSchemaMetadata> schemaCache = new LinkedHashMap<>(); // cache
+  private final SqlUserAwareConnectionProvider connectionProvider;
+  private final Map<String, SqlSchemaMetadata> schemaCache = new LinkedHashMap<>(); // cache
   private Collection<String> schemaNames = new ArrayList<>();
+  private Collection<SchemaInfo> schemaInfos = new ArrayList<>();
   private boolean inTx;
   private static Logger logger = LoggerFactory.getLogger(SqlDatabase.class);
   private String INITIAL_ADMIN_PW =
-      (String) EnvironmentProperty.getParameter(Constants.MOLGENIS_ADMIN_PW, ADMIN, STRING);
+      (String)
+          EnvironmentProperty.getParameter(Constants.MOLGENIS_ADMIN_PW, ADMIN_PW_DEFAULT, STRING);
+
   private DatabaseListener listener =
       new DatabaseListener() {
         @Override
@@ -60,6 +64,7 @@ public class SqlDatabase implements Database {
 
     // copy all schemas
     this.schemaNames.addAll(copy.schemaNames);
+    this.schemaInfos.addAll(copy.schemaInfos);
     for (Map.Entry<String, SqlSchemaMetadata> schema : copy.schemaCache.entrySet()) {
       this.schemaCache.put(schema.getKey(), new SqlSchemaMetadata(this, schema.getValue()));
     }
@@ -101,15 +106,6 @@ public class SqlDatabase implements Database {
       logger.info("with " + org.molgenis.emx2.Constants.MOLGENIS_POSTGRES_USER + "=" + user);
       logger.info("with " + org.molgenis.emx2.Constants.MOLGENIS_POSTGRES_PASS + "=<HIDDEN>");
 
-      if (!Pattern.matches("[0-9A-Za-z/:]+", url)) {
-        logger.error(
-            "Error: invalid "
-                + org.molgenis.emx2.Constants.MOLGENIS_POSTGRES_URI
-                + " string. Found :"
-                + url);
-        return;
-      }
-
       // create data source
       HikariDataSource dataSource = new HikariDataSource();
       dataSource.setJdbcUrl(url);
@@ -141,10 +137,10 @@ public class SqlDatabase implements Database {
       if (!hasUser(USER)) {
         addUser(USER); // used as role to identify all users except anonymous
       }
-      if (!hasUser(ADMIN)) {
-        addUser(ADMIN);
-        setUserPassword(ADMIN, INITIAL_ADMIN_PW);
-        jooq.execute("ALTER USER {0} WITH SUPERUSER", name(MG_USER_PREFIX + ADMIN));
+      if (!hasUser(ADMIN_USER)) {
+        addUser(ADMIN_USER);
+        setUserPassword(ADMIN_USER, INITIAL_ADMIN_PW);
+        jooq.execute("ALTER USER {0} WITH SUPERUSER", name(MG_USER_PREFIX + ADMIN_USER));
       }
     } catch (Exception e) {
       // this happens if multiple inits run at same time, totally okay to ignore
@@ -174,10 +170,15 @@ public class SqlDatabase implements Database {
 
   @Override
   public SqlSchema createSchema(String name) {
+    return this.createSchema(name, null);
+  }
+
+  @Override
+  public SqlSchema createSchema(String name, String description) {
     long start = System.currentTimeMillis();
     this.tx(
         db -> {
-          SqlSchemaMetadata metadata = new SqlSchemaMetadata(db, name);
+          SqlSchemaMetadata metadata = new SqlSchemaMetadata(db, name, description);
           executeCreateSchema((SqlDatabase) db, metadata);
           // copy
           SqlSchema schema = (SqlSchema) db.getSchema(metadata.getName());
@@ -190,6 +191,22 @@ public class SqlDatabase implements Database {
         });
     getListener().schemaChanged(name);
     this.log(start, "created schema " + name);
+    return getSchema(name);
+  }
+
+  @Override
+  public Schema updateSchema(String name, String description) {
+    long start = System.currentTimeMillis();
+    this.tx(
+        db -> {
+          SqlSchemaMetadata metadata = new SqlSchemaMetadata(db, name, description);
+          MetadataUtils.updateSchemaMetadata(((SqlDatabase) db).getJooq(), metadata);
+
+          // refresh
+          db.clearCache();
+        });
+    getListener().schemaChanged(name);
+    this.log(start, "updated schema " + name);
     return getSchema(name);
   }
 
@@ -213,9 +230,11 @@ public class SqlDatabase implements Database {
     long start = System.currentTimeMillis();
     tx(
         database -> {
-          SqlSchemaMetadataExecutor.executeDropSchema((SqlDatabase) database, name);
-          ((SqlDatabase) database).schemaNames.remove(name);
-          ((SqlDatabase) database).schemaCache.remove(name);
+          SqlDatabase sqlDatabase = (SqlDatabase) database;
+          SqlSchemaMetadataExecutor.executeDropSchema(sqlDatabase, name);
+          sqlDatabase.schemaNames.remove(name);
+          sqlDatabase.schemaInfos.clear();
+          sqlDatabase.schemaCache.remove(name);
         });
 
     listener.schemaRemoved(name);
@@ -245,6 +264,14 @@ public class SqlDatabase implements Database {
   }
 
   @Override
+  public Collection<SchemaInfo> getSchemaInfos() {
+    if (this.schemaInfos.isEmpty()) {
+      this.schemaInfos = MetadataUtils.loadSchemaInfos(this);
+    }
+    return this.schemaInfos;
+  }
+
+  @Override
   public void addUser(String user) {
     if (hasUser(user)) return; // idempotent
     long start = System.currentTimeMillis();
@@ -269,7 +296,7 @@ public class SqlDatabase implements Database {
   public void setUserPassword(String user, String password) {
     // can only as admin or as own user
     if (getActiveUser() != null
-        && !getActiveUser().equals(ADMIN)
+        && !getActiveUser().equals(ADMIN_USER)
         && !user.equals(getActiveUser())) {
       throw new MolgenisException("Set password failed for user '" + user + "': permission denied");
     }
@@ -287,7 +314,7 @@ public class SqlDatabase implements Database {
 
   @Override
   public List<User> getUsers(int limit, int offset) {
-    if (!ADMIN.equals(getActiveUser()) && getActiveUser() != null) {
+    if (!ADMIN_USER.equals(getActiveUser()) && getActiveUser() != null) {
       throw new MolgenisException("getUsers denied");
     }
     return MetadataUtils.loadUsers(getJooq(), limit, offset);
@@ -395,11 +422,18 @@ public class SqlDatabase implements Database {
       this.databaseVersion = from.databaseVersion;
 
       this.schemaNames = from.schemaNames;
+      this.schemaInfos = from.schemaInfos;
 
       // remove schemas that were dropped
-      this.schemaCache.keySet().stream()
-          .filter(s -> !from.schemaCache.keySet().contains(s))
-          .forEach(s -> this.schemaCache.remove(s));
+      Set<String> removeSet = new HashSet<>();
+      for (String key : this.schemaCache.keySet()) {
+        if (!from.schemaCache.keySet().contains(key)) {
+          removeSet.add(key);
+        }
+      }
+      for (String key : removeSet) {
+        this.schemaCache.remove(key);
+      }
 
       // sync the existing schema cache, add missing
       from.schemaCache
@@ -425,6 +459,7 @@ public class SqlDatabase implements Database {
   public void clearCache() {
     this.schemaCache.clear();
     this.schemaNames.clear();
+    this.schemaInfos.clear();
   }
 
   public DSLContext getJooq() {
@@ -438,9 +473,24 @@ public class SqlDatabase implements Database {
 
   @Override
   public int countUsers() {
-    if (!ADMIN.equals(getActiveUser()) && getActiveUser() != null) {
+    if (!ADMIN_USER.equals(getActiveUser()) && getActiveUser() != null) {
       throw new MolgenisException("countUsers denied");
     }
     return MetadataUtils.countUsers(getJooq());
+  }
+
+  @Override
+  public String getAdminUserName() {
+    return ADMIN_USER;
+  }
+
+  @Override
+  public boolean isAdmin() {
+    return ADMIN_USER.equals(getActiveUser());
+  }
+
+  @Override
+  public void becomeAdmin() {
+    this.setActiveUser(getAdminUserName());
   }
 }
