@@ -87,6 +87,10 @@ jobs:
       - setup_remote_docker:
           version: 19.03.13
           docker_layer_caching: true
+          
+      - run:
+          name: (re)build the image
+          command: ./gradlew docker
 
       # push ssr-catalogue to repo
       - run: |
