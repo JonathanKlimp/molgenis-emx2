@@ -37,6 +37,7 @@
       </count-card>
 
     </div>
+    <page-header title="Foobar"></page-header>
   </div>
 
 </div>
@@ -57,9 +58,10 @@
 <script>
 import CountCard from '../../../components/CountCard.vue'
 import Menu from '../../../components/Menu.vue'
+import { PageHeader } from 'components'
 export default {
   name: "SSRCatalogue",
-  components: { Menu, CountCard },
+  components: { Menu, CountCard, PageHeader },
   async fetch ({store}) {
     await store.dispatch('fetchCounts')
     return store.dispatch('fetchSession')
